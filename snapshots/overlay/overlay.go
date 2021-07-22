@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -104,13 +105,31 @@ func NewSnapshotter(root string, opts ...Opt) (snapshots.Snapshotter, error) {
 		logrus.WithError(err).Warnf("cannot detect whether \"userxattr\" option needs to be used, assuming to be %v", userxattr)
 	}
 
-	return &snapshotter{
+	o := &snapshotter{
 		root:        root,
 		ms:          ms,
 		asyncRemove: config.asyncRemove,
 		indexOff:    indexOff,
 		userxattr:   userxattr,
-	}, nil
+	}
+	// mount all squashfs layer
+	o.Walk(context.Background(), func(ctx context.Context, info snapshots.Info) error {
+		id, _, _, _ := storage.GetInfo(ctx, info.Name)
+		squash_image := filepath.Join(o.root, "snapshots", id, "layer.squashfs")
+		snapshotDir := filepath.Join(o.root, "snapshots", id, "fs")
+		m := &mount.Mount{
+			Source:  squash_image,
+			Type:    "squashfs",
+			Options: []string{"loop"},
+		}
+		mount.Unmount(snapshotDir, 0)
+		err := m.Mount(snapshotDir)
+		if err != nil {
+			log.G(ctx).WithError(err).Fatal("Can't mount underlying squashfs")
+		}
+		return nil
+	})
+	return o, nil
 }
 
 // Stat returns the info for an active or committed snapshot by name or
@@ -236,6 +255,24 @@ func (o *snapshotter) Commit(ctx context.Context, name, key string, opts ...snap
 	if _, err = storage.CommitActive(ctx, key, name, snapshots.Usage(usage), opts...); err != nil {
 		return errors.Wrap(err, "failed to commit snapshot")
 	}
+
+	// convert rw layer to squashfs object
+	squash_image := filepath.Join(o.root, "snapshots", id, "layer.squashfs")
+	snapshotDir := filepath.Join(o.root, "snapshots", id, "fs")
+	_, err = exec.Command("mksquashfs", snapshotDir, squash_image, "-comp", "lz4", "-Xhc", "-b", "1M").Output()
+	if err != nil {
+		return errors.Wrap(err, "failed to create SquashFS")
+	} else {
+		//delete the original dir and mount the newly created squashfs file to the same place
+		os.RemoveAll(snapshotDir)
+		os.Mkdir(snapshotDir, 0755)
+		m := &mount.Mount{
+			Source:  squash_image,
+			Type:    "squashfs",
+			Options: []string{"loop"},
+		}
+		m.Mount(snapshotDir)
+	}
 	return t.Commit()
 }
 
@@ -303,6 +340,7 @@ func (o *snapshotter) Cleanup(ctx context.Context) error {
 	}
 
 	for _, dir := range cleanup {
+		mount.Unmount(dir+"/fs", 0)
 		if err := os.RemoveAll(dir); err != nil {
 			log.G(ctx).WithError(err).WithField("path", dir).Warn("failed to remove directory")
 		}
