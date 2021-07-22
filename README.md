@@ -16,7 +16,7 @@ containerd is designed to be embedded into a larger system, rather than being us
 ![architecture](design/architecture.png)
 
 ## Fork Notes
-This purpose of this fork is for adding SquashFS support.
+The purpose of this fork is for adding SquashFS support to overlayfs plugin.
 
 ## Now Recruiting
 
