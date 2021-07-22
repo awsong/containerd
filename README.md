@@ -15,6 +15,9 @@ containerd is designed to be embedded into a larger system, rather than being us
 
 ![architecture](design/architecture.png)
 
+## Fork Notes
+This purpose of this fork is for adding SquashFS support.
+
 ## Now Recruiting
 
 We are a large inclusive OSS project that is welcoming help of any kind shape or form:
